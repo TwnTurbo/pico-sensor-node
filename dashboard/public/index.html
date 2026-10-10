@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bedroom</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@200;300;500&family=Barlow+Semi+Condensed:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+  /* Recorder-chart palette: pale chart paper, violet thermograph ink,
+     teal hygrograph ink, graphite for everything else. */
+  :root {
+    --paper:   #E8EBE5;
+    --sheet:   #F3F5F0;
+    --grid:    rgba(31, 111, 107, 0.14);
+    --graphite:#26271F;
+    --muted:   #6E7066;
+    --temp:    #5B2A86;
+    --hum:     #1F6F6B;
+    --light:   #8A6A1F;
+    --alarm:   #B3261E;
+    --rule:    #C9CEC4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:   #1A1C18;
+      --sheet:   #22251F;
+      --grid:    rgba(120, 190, 180, 0.10);
+      --graphite:#E4E6DE;
+      --muted:   #959889;
+      --temp:    #C4A3F0;
+      --hum:     #6FC2B8;
+      --light:   #D9B65C;
+      --alarm:   #FF8A80;
+      --rule:    #3A3D35;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--graphite);
+    font: 400 16px/1.45 "Barlow Semi Condensed", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .page { max-width: 1040px; margin: 0 auto; padding: 40px 24px 64px; }
+
+  /* ---------- Readout ---------- */
+  .readout {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas: "room room" "temp side" "temp ext";
+    gap: 0 56px;
+    align-items: end;
+  }
+  .room { grid-area: room; margin-bottom: 8px; }
+  .room h1 {
+    margin: 0;
+    font: 500 1.75rem/1.1 "Barlow Semi Condensed", sans-serif;
+    letter-spacing: -0.01em;
+  }
+  .status { margin: 6px 0 0; color: var(--muted); font-size: 0.95rem; }
+  .status::before {
+    content: ""; display: inline-block; width: 7px; height: 7px;
+    margin-right: 8px; vertical-align: 1px; background: var(--hum);
+  }
+  .status.stale { color: var(--alarm); }
+  .status.stale::before { background: var(--alarm); }
+
+  .temp-now {
+    grid-area: temp;
+    margin: 4px 0 -0.08em -0.04em;
+    font: 200 clamp(7rem, 22vw, 13.5rem)/0.82 "Barlow Condensed", sans-serif;
+    letter-spacing: -0.035em;
+    color: var(--temp);
+  }
+  .temp-now .unit {
+    font-weight: 300; font-size: 0.32em; letter-spacing: 0;
+    vertical-align: 1.6em; margin-left: 0.06em; color: var(--graphite);
+  }
+
+  .side { grid-area: side; }
+  .side dl { margin: 0; display: grid; grid-template-columns: auto 1fr; column-gap: 20px; }
+  .side dt { color: var(--muted); font-size: 0.95rem; align-self: baseline; }
+  .side dd {
+    margin: 0; align-self: baseline;
+    font: 300 2.6rem/1.15 "Barlow Condensed", sans-serif;
+  }
+  .side dd.h { color: var(--hum); }
+  .side dd.l { color: var(--light); }
+  .extremes {
+    grid-area: ext; align-self: start;
+    margin: 16px 0 0; padding-top: 12px; border-top: 1px solid var(--rule);
+    color: var(--muted); font-size: 0.95rem;
+  }
+  .extremes p { margin: 0; }
+  .extremes strong { color: var(--graphite); font-weight: 500; }
+
+  /* ---------- Chart sheet ---------- */
+  .sheet-head { margin: 44px 0 0; padding-bottom: 8px; }
+
+  .range { display: flex; gap: 22px; }
+  .range button {
+    appearance: none; background: none; border: 0; padding: 4px 0 6px;
+    font: 500 1rem "Barlow Semi Condensed", sans-serif;
+    color: var(--muted); cursor: pointer;
+    border-bottom: 2px solid transparent;
+  }
+  .range button:hover { color: var(--graphite); }
+  .range button[aria-pressed="true"] { color: var(--graphite); border-bottom-color: var(--temp); }
+  .range button:focus-visible { outline: 2px solid var(--temp); outline-offset: 3px; }
+
+  .sheet {
+    position: relative;
+    background: var(--sheet);
+    border: 1px solid var(--rule);
+    box-shadow: 0 1px 0 var(--rule), 0 12px 24px -20px rgba(38, 39, 31, 0.35);
+    padding: 20px 20px 12px 8px;
+  }
+  .trace { position: relative; }
+  .trace + .trace { border-top: 1px solid var(--rule); margin-top: 10px; padding-top: 10px; }
+  .trace-name {
+    position: absolute; left: 60px; top: 2px; z-index: 1;
+    font-size: 0.9rem; color: var(--muted); pointer-events: none;
+  }
+  .trace + .trace .trace-name { top: 12px; }
+  .trace-name b { font-weight: 600; }
+  .t-temp { height: 260px; }
+  .t-hum  { height: 140px; }
+  .t-light{ height: 150px; }  /* includes the time axis */
+
+  .empty {
+    position: absolute; inset: 0; display: none;
+    align-items: center; justify-content: center; text-align: center;
+    padding: 24px; color: var(--muted); background: color-mix(in srgb, var(--sheet) 80%, transparent);
+  }
+  .empty.show { display: flex; }
+
+  footer { margin-top: 14px; color: var(--muted); font-size: 0.85rem; }
+
+  @media (max-width: 680px) {
+    .page { padding: 28px 16px 48px; }
+    .readout { grid-template-areas: "room room" "temp side" "ext ext"; gap: 0 24px; }
+    .temp-now { font-size: 8.5rem; }
+    .side dl { grid-template-columns: 1fr; }
+    .side dt { font-size: 0.85rem; }
+    .side dd { font-size: 2rem; line-height: 1; margin-bottom: 8px; }
+    .sheet-head { margin-top: 32px; }
+    .sheet { padding: 16px 12px 8px 0; }
+    .trace-name { left: 52px; }
+    .t-temp { height: 220px; }
+  }
+</style>
+</head>
+<body>
+<main class="page">
+
+  <section class="readout" aria-live="polite">
+    <div class="room">
+      <h1>Bedroom</h1>
+      <p class="status" id="status">Waiting for the first reading</p>
+    </div>
+    <p class="temp-now" id="t" aria-label="Temperature">--<span class="unit">°C</span></p>
+
+    <div class="side">
+      <dl>
+        <dt>Humidity</dt><dd class="h" id="h">--</dd>
+        <dt>Light level</dt><dd class="l" id="l">--</dd>
+      </dl>
+    </div>
+
+    <div class="extremes">
+      <p id="trend"></p>
+      <p id="extremes">Lowest and highest temperatures will show once there's history.</p>
+    </div>
+  </section>
+
+  <div class="sheet-head">
+    <div class="range" role="group" aria-label="Time range">
+      <button type="button" data-hours="24" aria-pressed="true">24 hours</button>
+      <button type="button" data-hours="168" aria-pressed="false">7 days</button>
+      <button type="button" data-hours="720" aria-pressed="false">30 days</button>
+    </div>
+  </div>
+
+  <section class="sheet" aria-label="Readings history">
+    <div class="trace t-temp"><span class="trace-name"><b style="color:var(--temp)">Temperature</b> °C</span><canvas id="chartT"></canvas></div>
+    <div class="trace t-hum"><span class="trace-name"><b style="color:var(--hum)">Humidity</b> %</span><canvas id="chartH"></canvas></div>
+    <div class="trace t-light"><span class="trace-name"><b style="color:var(--light)">Light level</b> %</span><canvas id="chartL"></canvas></div>
+    <div class="empty" id="empty">No readings in this period yet. They'll appear here as the sensor reports in.</div>
+  </section>
+
+  <footer>Readings every minute from a Pico 2 W, smoothed over 15 minutes. Longer ranges are averaged.</footer>
+</main>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-app.js";
+import { getDatabase, ref, query, orderByChild, startAt, get, onValue }
+  from "https://www.gstatic.com/firebasejs/12.14.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyD-0DyW7zcvUendwZIso2mqZbkGv3kpe5k",
+  authDomain: "pico-sensor-2b8f8.firebaseapp.com",
+  databaseURL: "https://pico-sensor-2b8f8-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "pico-sensor-2b8f8",
+  storageBucket: "pico-sensor-2b8f8.firebasestorage.app",
+  messagingSenderId: "198682246978",
+  appId: "1:198682246978:web:a4e7a7da844a815ac2d2db"
+};
+
+const db = getDatabase(initializeApp(firebaseConfig));
+const DEVICE = "bedroom";
+const KEYS = ["t", "h", "l"];
+const HOUR = 3600000;
+let currentHours = 24, lastTs = 0, latestTs = 0;
+
+// ---------- Colours come from the CSS so light/dark stay in sync ----------
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const ink = () => ({ t: css("--temp"), h: css("--hum"), l: css("--light"),
+                     grid: css("--grid"), muted: css("--muted"), rule: css("--rule") });
+
+// ---------- Charts: one recorder sheet, three traces on a shared time axis ----------
+const AXIS_W = 48;   // fixed y-axis width keeps the three traces aligned
+function makeChart(id, key, showTime, suggested) {
+  const c = ink();
+  return new Chart(document.getElementById(id), {
+    type: "line",
+    data: { datasets: [{ data: [], borderColor: c[key], borderWidth: 1.75,
+                         pointRadius: 0, pointHoverRadius: 3, tension: 0.25, fill: false }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: "index", intersect: false },
+      layout: { padding: { top: 26 } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: css("--graphite"), titleColor: css("--sheet"), bodyColor: css("--sheet"),
+          displayColors: false, cornerRadius: 0, padding: 8,
+          titleFont: { family: "Barlow Semi Condensed", weight: "500" },
+          bodyFont: { family: "Barlow Semi Condensed" },
+          callbacks: { label: ctx => {
+            const v = Math.round(ctx.parsed.y * 10) / 10;
+            return key === "t" ? `${v} °C` : `${v} %`;
+          } }
+        }
+      },
+      scales: {
+        x: {
+          type: "time",
+          time: { displayFormats: { hour: "HH:mm", day: "d MMM" }, tooltipFormat: "EEE d MMM, HH:mm" },
+          ticks: { display: showTime, color: c.muted, maxTicksLimit: 7, maxRotation: 0,
+                   font: { family: "Barlow Semi Condensed", size: 13 } },
+          grid: { color: c.grid, drawTicks: false },
+          border: { display: false }
+        },
+        y: {
+          ...suggested,
+          afterFit: s => { s.width = AXIS_W; },
+          ticks: { color: c.muted, maxTicksLimit: key === "t" ? 6 : 4, padding: 8,
+                   font: { family: "Barlow Semi Condensed", size: 13 } },
+          grid: { color: c.grid, drawTicks: false },
+          border: { display: false }
+        }
+      }
+    }
+  });
+}
+const charts = {
+  t: makeChart("chartT", "t", false, { grace: "15%" }),
+  h: makeChart("chartH", "h", false, { grace: "25%" }),
+  l: makeChart("chartL", "l", true,  { min: 0, max: 100 }),
+};
+
+// ---------- History ----------
+const avg = (g, k) => g.reduce((s, r) => s + r[k], 0) / g.length;
+function bucket(rows, minutes) {
+  if (minutes <= 1) return rows;
+  const size = minutes * 60000, groups = new Map();
+  for (const r of rows) {
+    const key = Math.floor(r.ts / size) * size;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+  return [...groups].map(([ts, g]) => ({ ts, t: avg(g, "t"), h: avg(g, "h"), l: avg(g, "l") }));
+}
+
+// The DHT11 only reports whole degrees, so raw minute data flickers between
+// neighbouring values. A centred 15-minute rolling mean shows the real trend.
+function smooth(rows, win = 15) {
+  const half = Math.floor(win / 2);
+  return rows.map((r, i) => {
+    const g = rows.slice(Math.max(0, i - half), i + half + 1);
+    return { ts: r.ts, t: avg(g, "t"), h: avg(g, "h"), l: r.l };
+  });
+}
+
+function showTrend(rows) {
+  const el = document.getElementById("trend");
+  const now = Date.now();
+  const recent = rows.filter(r => r.ts > now - 10 * 60000);
+  const before = rows.filter(r => r.ts > now - 70 * 60000 && r.ts <= now - 50 * 60000);
+  if (!recent.length || !before.length) { el.textContent = ""; return; }
+  const diff = Math.round(avg(recent, "t") - avg(before, "t"));
+  el.textContent = diff === 0 ? "Steady over the last hour."
+    : `${diff > 0 ? "Up" : "Down"} ${Math.abs(diff)}° over the last hour.`;
+}
+
+const timeOf = ts => new Date(ts).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+const dayOf  = ts => new Date(ts).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+
+function showExtremes(rows, hours) {
+  const el = document.getElementById("extremes");
+  if (!rows.length) { el.textContent = "Lowest and highest temperatures will show once there's history."; return; }
+  let lo = rows[0], hi = rows[0];
+  for (const r of rows) { if (r.t < lo.t) lo = r; if (r.t > hi.t) hi = r; }
+  const when = r => hours <= 24 ? `at ${timeOf(r.ts)}` : `on ${dayOf(r.ts)}`;
+  el.innerHTML = `Lowest <strong>${lo.t}°</strong> ${when(lo)}, highest <strong>${hi.t}°</strong> ${when(hi)}`;
+}
+
+async function loadHistory(hours) {
+  const since = Date.now() - hours * HOUR;
+  const snap = await get(query(ref(db, `devices/${DEVICE}/readings`), orderByChild("ts"), startAt(since)));
+  const rows = [];
+  snap.forEach(c => { rows.push(c.val()); });
+
+  const data = hours <= 24 ? smooth(rows) : bucket(rows, hours <= 168 ? 10 : 60);
+  for (const k of KEYS) {
+    charts[k].options.scales.x.time.unit = hours <= 24 ? "hour" : "day";
+    charts[k].options.scales.x.min = since;
+    charts[k].options.scales.x.max = Date.now();
+    charts[k].data.datasets[0].data = data.map(r => ({ x: r.ts, y: r[k] }));
+    charts[k].update();
+  }
+  document.getElementById("empty").classList.toggle("show", rows.length === 0);
+  showExtremes(rows, hours);
+  showTrend(rows);
+  lastTs = rows.length ? rows[rows.length - 1].ts : 0;
+}
+
+// ---------- Live updates ----------
+onValue(ref(db, `devices/${DEVICE}/latest`), snap => {
+  const r = snap.val();
+  if (!r) return;
+  document.getElementById("t").firstChild.nodeValue = r.t;
+  document.getElementById("h").textContent = `${r.h}%`;
+  document.getElementById("l").textContent = `${r.l}%`;
+
+  if (currentHours === 24 && r.ts > lastTs) {
+    for (const k of KEYS) {
+      const d = charts[k].data.datasets[0].data;
+      d.push({ x: r.ts, y: r[k] });
+      while (d.length && d[0].x < Date.now() - 24 * HOUR) d.shift();
+      charts[k].options.scales.x.min = Date.now() - 24 * HOUR;
+      charts[k].options.scales.x.max = Date.now();
+      charts[k].update();
+    }
+    lastTs = r.ts;
+    document.getElementById("empty").classList.remove("show");
+  }
+  latestTs = r.ts;
+  updateStatus();
+});
+
+function updateStatus() {
+  if (!latestTs) return;
+  const el = document.getElementById("status");
+  const mins = Math.floor((Date.now() - latestTs) / 60000);
+  const ago = mins < 1 ? "just now" : mins === 1 ? "1 minute ago" : `${mins} minutes ago`;
+  if (mins >= 5) {
+    el.textContent = `No reading for ${mins} minutes. Check the sensor's power and Wi-Fi.`;
+    el.classList.add("stale");
+  } else {
+    el.textContent = `Last reading ${ago}`;
+    el.classList.remove("stale");
+  }
+}
+setInterval(updateStatus, 30000);
+
+// ---------- Range control ----------
+document.querySelectorAll(".range button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".range button").forEach(b => b.setAttribute("aria-pressed", b === btn));
+    currentHours = +btn.dataset.hours;
+    loadHistory(currentHours);
+  });
+});
+
+loadHistory(24);
+
+// Redraw once the web fonts arrive so axis labels use them too
+document.fonts.ready.then(() => KEYS.forEach(k => charts[k].update()));
+</script>
+</body>
+</html>
