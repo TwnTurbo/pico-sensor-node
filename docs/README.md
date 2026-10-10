@@ -1,6 +1,3 @@
-=======================READ ME=============================
-A Wi-Fi sensor node that logs temperature, humidity and light to the cloud 24/7.
-
 # Pico Sensor Node
 
 A Wi-Fi sensor node that logs room temperature, humidity and light level to the cloud every minute, around the clock, with a live web dashboard to view the history.
